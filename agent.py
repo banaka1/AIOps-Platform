@@ -148,11 +148,12 @@ def test_chat_openai(message: str, session_id: str, db: Session) -> Tuple[str, s
             answer = response.content
             break
 
-        # 有工具调用：存 ai 决策消息
-        _save_message(
-            db, session_id, "ai", response.content or "",
-            tool_calls=response.tool_calls,
-        )
+        # 有工具调用：若模型附带了正文则落库，否则仅保留在内存上下文（避免历史出现空气泡）
+        if response.content and response.content.strip():
+            _save_message(
+                db, session_id, "ai", response.content,
+                tool_calls=response.tool_calls,
+            )
         messages.append(response)
 
         # FR-5.4 执行所有工具调用，写 tool_call_logs

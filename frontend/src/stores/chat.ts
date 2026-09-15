@@ -20,6 +20,8 @@ export const useChatStore = defineStore('chat', () => {
     // 只展示 human 和 ai 消息，tool 消息合并到对应 ai 的 tools 里
     messages.value = list
       .filter((m): m is MessageItem & { role: 'human' | 'ai' } => m.role === 'human' || m.role === 'ai')
+      // 过滤掉 AI 空内容消息（工具决策轮产生的中间消息），避免出现空白气泡
+      .filter((m) => m.role !== 'ai' || (m.content && m.content.trim()))
       .map((m) => ({ ...m }))
   }
 
