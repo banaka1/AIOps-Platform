@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { MessageItem, ToolCallInfo } from '@/types/models'
 import { getSessionMessages } from '@/api/session'
-import { sendChat } from '@/api/chat'
+import { streamChat } from '@/api/chat'
 
 export interface ChatMessage {
   role: 'human' | 'ai'
@@ -27,25 +27,42 @@ export const useChatStore = defineStore('chat', () => {
 
   async function send(sessionId: string, text: string) {
     loading.value = true
-    // 先追加用户消息
+    // 先追加用户消息与空白 ai 气泡，流式期间逐字填充
     messages.value.push({ role: 'human', content: text, ts: new Date().toLocaleString() })
+    messages.value.push({ role: 'ai', content: '', ts: new Date().toLocaleString(), tools: [] })
+    const aiMsg = messages.value[messages.value.length - 1]
     try {
-      const resp = await sendChat({ session_id: sessionId, message: text })
-      const reply = resp.reply && resp.reply.trim() ? resp.reply : '（AI 未返回有效内容，请重试）'
-      messages.value.push({
-        role: 'ai',
-        content: reply,
-        ts: new Date().toLocaleString(),
-        tools: resp.tools,
+      await streamChat({ session_id: sessionId, message: text }, {
+        onToken: ({ text: t }) => {
+          aiMsg.content += t
+        },
+        onReset: () => {
+          aiMsg.content = ''
+        },
+        onToolCall: ({ name, args }) => {
+          aiMsg.tools = [...(aiMsg.tools ?? []), { name, args, result: '', ms: 0 }]
+        },
+        onToolResult: ({ name, result, ms }) => {
+          const list = aiMsg.tools ?? []
+          const idx = list.findIndex((t) => t.name === name && !t.result)
+          if (idx >= 0) list[idx] = { ...list[idx], result, ms }
+          else list.push({ name, args: {}, result, ms })
+          aiMsg.tools = [...list]
+        },
+        onDone: ({ reply, tools }) => {
+          aiMsg.content = reply || aiMsg.content
+          aiMsg.tools = tools
+        },
+        onError: ({ detail }) => {
+          aiMsg.content = aiMsg.content || `请求失败：${detail}`
+        },
       })
-      return resp
+      if (!aiMsg.content.trim()) {
+        aiMsg.content = '（AI 未返回有效内容，请重试）'
+      }
+      return null
     } catch (e) {
-      // 请求失败时也推送一条 AI 错误消息，避免用户只看到"无响应"
-      messages.value.push({
-        role: 'ai',
-        content: '请求失败，请检查网络或稍后重试。',
-        ts: new Date().toLocaleString(),
-      })
+      aiMsg.content = aiMsg.content || '请求失败，请检查网络或稍后重试。'
       return null
     } finally {
       loading.value = false

@@ -205,3 +205,102 @@ def test_chat_openai(message: str, session_id: str, db: Session) -> Tuple[str, s
 
     db.commit()
     return answer, intent, tool_infos
+
+
+def test_chat_openai_stream(message: str, session_id: str, db: Session):
+    """
+    流式版单轮对话，生成器依次产出 (event, data)：
+    meta / tool_call / tool_result / token / reset / done
+    """
+    intent, _confidence = intent_classifier.classify(message)
+    yield "meta", {"intent": intent}
+
+    model = ChatOpenAI(
+        model_name=os.getenv("SILICONFLOW_MODEL_NAME"),
+        temperature=0.7,
+        api_key=os.getenv("SILICONFLOW_API_KEY"),
+        base_url=os.getenv("SILICONFLOW_BASE_URL"),
+    )
+    model_with_tools = model.bind_tools(registry.all_tools())
+
+    chat_history = load_chat_history(db, session_id)
+    messages = prompt.format_messages(chat_history=chat_history, input=message)
+
+    _save_message(db, session_id, "human", message)
+
+    tool_infos = []
+    answer = ""
+
+    def _stream_round(msgs):
+        """流式执行一轮：逐 token 产出 token 事件，返回累积后的完整 chunk"""
+        full = None
+        tool_detected = False
+        for chunk in model_with_tools.stream(msgs):
+            full = chunk if full is None else full + chunk
+            if getattr(chunk, "tool_call_chunks", None):
+                tool_detected = True
+            elif chunk.content and not tool_detected:
+                yield "token", {"text": chunk.content}
+        return full
+
+    for loop in range(MAX_TOOL_LOOPS):
+        full = yield from _stream_round(messages)
+
+        if full is None or not full.tool_calls:
+            answer = (full.content or "") if full is not None else ""
+            break
+
+        # 工具决策轮：仅当模型附带了正文才落库，否则只保留在内存上下文
+        if full.content and full.content.strip():
+            _save_message(db, session_id, "ai", full.content, tool_calls=full.tool_calls)
+        messages.append(full)
+
+        for tool_call in full.tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_id = tool_call["id"]
+
+            yield "tool_call", {"name": tool_name, "args": tool_args}
+
+            t0 = time.time()
+            tool_obj = registry.get(tool_name)
+            tool_result = tool_obj.invoke(tool_args) if tool_obj else f"未知工具：{tool_name}"
+            latency_ms = int((time.time() - t0) * 1000)
+
+            _save_message(db, session_id, "tool", tool_result)
+            _save_tool_log(db, session_id, tool_name, tool_args, tool_result, latency_ms)
+            tool_infos.append({
+                "name": tool_name, "args": tool_args,
+                "result": tool_result, "ms": latency_ms,
+            })
+            messages.append(ToolMessage(content=tool_result, tool_call_id=tool_id))
+
+            yield "tool_result", {"name": tool_name, "result": tool_result, "ms": latency_ms}
+    else:
+        # 循环耗尽仍未得到最终回答，再流式生成一轮
+        full = yield from _stream_round(messages)
+        answer = (full.content or "") if full is not None else ""
+
+    # FR-6 反幻觉校验：不通过则 reset 气泡，重试一次（同样流式）
+    tool_results = [t["result"] for t in tool_infos]
+    is_valid, reason = output_validator.validate(answer, tool_results)
+    if not is_valid:
+        bad_answer = answer
+        yield "reset", {}
+        answer = ""
+        messages.append(AIMessage(content=bad_answer or ""))
+        messages.append(HumanMessage(
+            content=f"你的回答存在问题：{reason}。请严格基于上方工具返回的真实数据重新回答，"
+                    f"不要编造任何数值，工具失败则如实说明。"
+        ))
+        full = yield from _stream_round(messages)
+        answer = (full.content or "") if full is not None else ""
+
+    if not answer or not answer.strip():
+        answer = "抱歉，我暂时无法生成有效回复，请稍后重试或换个问法。"
+        yield "reset", {}
+        yield "token", {"text": answer}
+
+    _save_message(db, session_id, "ai", answer)
+    db.commit()
+    yield "done", {"reply": answer, "tools": tool_infos}

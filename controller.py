@@ -1,8 +1,9 @@
 """
 FastAPI 入口：鉴权 + 会话 CRUD + 聊天
 """
-from datetime import datetime
+import json
 from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -171,3 +172,30 @@ def chat(
 
     reply, intent, tools = agent.test_chat_openai(req.message, req.session_id, db)
     return ChatResponse(reply=reply, intent=intent, tools=tools)
+
+
+@app.post("/api/chat/stream")
+def chat_stream(
+    req: ChatRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """FR-3 流式聊天：SSE 推送 meta/tool_call/tool_result/token/reset/done 事件"""
+    session = _get_user_session(db, req.session_id, user)
+    msg_count = db.query(DBMessage).filter(DBMessage.session_id == req.session_id).count()
+    if msg_count == 0:
+        session.title = req.message[:12]
+        db.commit()
+
+    def gen():
+        try:
+            for event, data in agent.test_chat_openai_stream(req.message, req.session_id, db):
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'detail': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
