@@ -248,8 +248,8 @@ SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/banaka1/ml-weather-agent.git
-cd ml-weather-agent
+git clone https://github.com/banaka1/AIOps-Platform.git
+cd AIOps-Platform
 ```
 
 ### 2. 配置环境变量
