@@ -81,7 +81,7 @@ registry.register(get_weather)
 def load_chat_history(db: Session, session_id: str, limit: int = 20) -> List[BaseMessage]:
     rows = (
         db.query(DBMessage)
-        .filter(DBMessage.session_id == session_id, DBMessage.role.in_(["human", "ai"]))
+        .filter(DBMessage.session_id == session_id, DBMessage.role.in_(["human", "ai", "tool"]))
         .order_by(DBMessage.id.desc())
         .limit(limit)
         .all()
@@ -92,7 +92,12 @@ def load_chat_history(db: Session, session_id: str, limit: int = 20) -> List[Bas
         if row.role == "human":
             history.append(HumanMessage(content=row.content))
         elif row.role == "ai":
-            history.append(AIMessage(content=row.content))
+            # 还原 tool_calls，让模型知道自己上轮调用过哪些工具
+            history.append(AIMessage(content=row.content, tool_calls=row.tool_calls))
+        elif row.role == "tool":
+            # tool 消息必须带 tool_call_id 才能被模型识别为对应工具的返回
+            tool_call_id = (row.tool_calls or {}).get("tool_call_id", "") if row.tool_calls else ""
+            history.append(ToolMessage(content=row.content, tool_call_id=tool_call_id))
     return history
 
 
@@ -170,7 +175,7 @@ def test_chat_openai(message: str, session_id: str, db: Session) -> Tuple[str, s
                 tool_result = f"未知工具：{tool_name}"
             latency_ms = int((time.time() - t0) * 1000)
 
-            _save_message(db, session_id, "tool", tool_result)
+            _save_message(db, session_id, "tool", tool_result, tool_calls={"tool_call_id": tool_id})
             _save_tool_log(db, session_id, tool_name, tool_args, tool_result, latency_ms)
             tool_infos.append({
                 "name": tool_name, "args": tool_args,
@@ -267,7 +272,7 @@ def test_chat_openai_stream(message: str, session_id: str, db: Session):
             tool_result = tool_obj.invoke(tool_args) if tool_obj else f"未知工具：{tool_name}"
             latency_ms = int((time.time() - t0) * 1000)
 
-            _save_message(db, session_id, "tool", tool_result)
+            _save_message(db, session_id, "tool", tool_result, tool_calls={"tool_call_id": tool_id})
             _save_tool_log(db, session_id, tool_name, tool_args, tool_result, latency_ms)
             tool_infos.append({
                 "name": tool_name, "args": tool_args,

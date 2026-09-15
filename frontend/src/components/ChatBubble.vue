@@ -2,27 +2,21 @@
   <div class="bubble-wrap" :class="role">
     <div class="avatar">{{ role === 'human' ? '我' : 'AI' }}</div>
     <div class="bubble">
-      <div class="content" v-html="renderedContent"></div>
+      <div class="content">{{ content }}</div>
       <ToolLogPanel v-if="tools && tools.length" :tools="tools" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import type { ToolCallInfo } from '@/types/models'
 import ToolLogPanel from './ToolLogPanel.vue'
 
-const props = defineProps<{
+defineProps<{
   role: 'human' | 'ai'
   content: string
   tools?: ToolCallInfo[]
 }>()
-
-// 简易换行渲染
-const renderedContent = computed(() =>
-  props.content.replace(/\n/g, '<br/>'),
-)
 </script>
 
 <style scoped lang="scss">
