@@ -44,8 +44,13 @@
 | 📂 **会话管理** | 新建 / 切换 / 重命名 / 软删除，按用户隔离 |
 | 🎯 **意图识别** | LLM 分类 chat / weather / nl2sql / diagnose，置信度 < 0.6 回退 chat |
 | 🔧 **多工具编排** | 天气查询、NL2SQL、SQL 生成、故障诊断，循环上限 3 次 |
+| 🧠 **RAG 故障诊断** | Chroma 向量库语义检索 + 关键词降级，支持模糊描述命中 |
+| ⚡ **流式输出** | SSE 逐 token 推送，首字延迟 2~5s，支持工具调用日志实时展示 |
+| 📋 **可查询数据表** | 前端展示 servers/metrics/alerts 表结构，辅助用户提问 |
 | 🛡️ **反幻觉校验** | 数值来源回溯，工具失败如实告知，不通过自动重试 |
 | 📊 **工具日志** | 每次调用记录名称 / 参数 / 结果 / 耗时，前端可折叠查看 |
+| 🎨 **Markdown 渲染** | 表格 / 加粗 / 行内代码安全渲染（无 v-html，防 XSS） |
+| 🔐 **输入校验** | Pydantic Field 限制用户名/密码/消息长度，防超长输入 |
 | 🎨 **Vue 3 前端** | Element Plus + Pinia + Vue Router，登录守卫 + Token 持久化 |
 
 </div>
@@ -63,7 +68,8 @@
 | 鉴权 | **python-jose** (JWT) + **bcrypt** | Token 签发校验 + 密码哈希 |
 | 校验 | **Pydantic v2** | 请求体 / 工具结果 Schema |
 | LLM 编排 | **LangChain** | Prompt 模板、`@tool`、`ToolMessage` |
-| LLM 接入 | **langchain-openai** → 硅基流动 | OpenAI 兼容接口 |
+| LLM 接入 | **langchain-openai** → 硅基流动 | OpenAI 兼容接口（对话 + 嵌入） |
+| 向量检索 | **langchain-chroma** + **chromadb** | 故障知识库 RAG 语义检索 |
 | 外部工具 | **高德天气 API** + **SQLite** | 实时天气 + 运维数据查询 |
 | SQL 安全 | **sqlparse** | NL2SQL 语法解析 + 黑名单拦截 |
 | 配置 | **python-dotenv** | 加载 `.env` |
@@ -121,7 +127,7 @@
 │     │  高德 API    │ SQLite 执行  │  仅生成 SQL  │          │
 │     └──────────────┴──────────────┴──────────────┘          │
 │     ┌──────────────┐                                         │
-│     │diagnose_fault│  fault_kb.json 知识库匹配               │
+│     │diagnose_fault│  Chroma RAG 语义检索 + fault_kb.json 降级 │
 │     └──────────────┘                                         │
 │  5. 多工具循环（上限 3 次）+ 写 tool_call_logs               │
 │  6. OutputValidator  →  反幻觉校验（不通过重试 1 次）        │
@@ -140,19 +146,21 @@
 
 ```
 MachineLearning/
-├── controller.py            # FastAPI 入口：鉴权 + 会话 CRUD + 聊天
-├── agent.py                 # Agent 编排核心：意图识别、工具循环、持久化
+├── controller.py            # FastAPI 入口：鉴权 + 会话 CRUD + 聊天（含 /api/chat/stream SSE）
+├── agent.py                 # Agent 编排核心：意图识别、工具循环、流式输出、持久化
 ├── auth.py                  # 密码哈希、JWT 签发/校验、当前用户依赖
 ├── database.py              # SQLAlchemy 引擎、SessionLocal、get_db
 ├── models.py                # ORM 模型：User / Session / Message / ToolCallLog
-├── schemas.py               # Pydantic 请求/响应模型
+├── schemas.py               # Pydantic 请求/响应模型（含输入长度校验）
 ├── intent.py                # 意图识别器（LLM 分类）
 ├── tool_registry.py         # 工具注册中心（单例）
 ├── output_validator.py      # 反幻觉输出校验（数值来源回溯）
 ├── nl2sql.py                # NL2SQL 工具（生成 + 校验 + 执行 SQLite）
-├── diagnose.py              # 故障诊断工具（知识库关键词匹配）
+├── diagnose.py              # 故障诊断工具（Chroma RAG 语义检索 + 关键词降级）
+├── build_fault_kb_vector.py # 构建故障知识库 Chroma 向量索引
 ├── init_ops_db.py           # 初始化 NL2SQL 示例 SQLite 库
-├── fault_kb.json            # 故障诊断知识库
+├── fault_kb.json            # 故障诊断知识库（6 类故障）
+├── chroma_db/               # Chroma 向量库持久化目录（不入仓，由 build 脚本生成）
 ├── sql/
 │   └── init.sql             # MySQL 初始化脚本（四张表）
 ├── docs/
@@ -160,11 +168,12 @@ MachineLearning/
 ├── frontend/                # Vue 3 前端工程
 │   ├── src/
 │   │   ├── api/             # 接口层（auth / chat / session / request）
-│   │   ├── components/      # ChatBubble / ChatInput / SessionList / ToolLogPanel
+│   │   ├── components/      # ChatBubble / ChatInput / SessionList / ToolLogPanel / SchemaPanel
 │   │   ├── layouts/         # ChatLayout
 │   │   ├── router/          # Vue Router + 登录守卫
 │   │   ├── stores/          # Pinia：user / session / chat
 │   │   ├── types/           # TypeScript 类型定义
+│   │   ├── utils/           # markdown.ts（安全 Markdown 解析器，无 v-html）
 │   │   └── views/           # LoginView / RegisterView / ChatView
 │   ├── vite.config.ts       # Vite 配置（含 /api 代理到 8000）
 │   └── package.json
@@ -198,6 +207,16 @@ MYSQL_DSN=mysql+pymysql://root:your_password@127.0.0.1:3306/agent_ops?charset=ut
 JWT_SECRET=please-change-this-to-a-random-secret-string
 JWT_EXP_DAYS=7
 
+# ============ RAG 故障诊断（可选）============
+# 嵌入模型（硅基流动，默认 BAAI/bge-large-zh-v1.5）
+SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-large-zh-v1.5
+# Chroma 向量库持久化目录（默认 ./chroma_db）
+# FAULT_CHROMA_PATH=./chroma_db
+# Chroma collection 名称（默认 fault_kb）
+# FAULT_CHROMA_COLLECTION=fault_kb
+# 检索 top-k（默认 3）
+# FAULT_TOP_K=3
+
 # ============ 可选配置 ============
 # NL2SQL_DB_PATH=./ops.db
 # FAULT_KB_PATH=./fault_kb.json
@@ -215,6 +234,10 @@ JWT_EXP_DAYS=7
 | `JWT_EXP_DAYS` | ⬜ | JWT 过期天数，默认 7 |
 | `NL2SQL_DB_PATH` | ⬜ | NL2SQL 示例库路径，默认 `./ops.db` |
 | `FAULT_KB_PATH` | ⬜ | 故障知识库路径，默认 `./fault_kb.json` |
+| `SILICONFLOW_EMBEDDING_MODEL` | ⬜ | RAG 嵌入模型，默认 `BAAI/bge-large-zh-v1.5` |
+| `FAULT_CHROMA_PATH` | ⬜ | Chroma 向量库目录，默认 `./chroma_db` |
+| `FAULT_CHROMA_COLLECTION` | ⬜ | Chroma collection 名，默认 `fault_kb` |
+| `FAULT_TOP_K` | ⬜ | 检索召回条数，默认 `3` |
 
 > ⚠️ 启动时会校验前 5 个变量，缺失则直接报错退出。
 
@@ -239,7 +262,7 @@ cp .env.example .env
 ### 3. 安装后端依赖
 
 ```bash
-pip install fastapi uvicorn sqlalchemy pymysql python-jose[cryptography] bcrypt python-dotenv langchain langchain-openai requests sqlparse
+pip install fastapi uvicorn sqlalchemy pymysql python-jose[cryptography] bcrypt python-dotenv langchain langchain-openai requests sqlparse chromadb langchain-chroma
 ```
 
 ### 4. 安装前端依赖
@@ -258,6 +281,9 @@ mysql -u root -p < sql/init.sql
 
 # 生成 NL2SQL 示例 SQLite 库
 python init_ops_db.py
+
+# 构建故障知识库 Chroma 向量索引（RAG 故障诊断必需）
+python build_fault_kb_vector.py
 ```
 
 ### 6. 启动后端
@@ -339,6 +365,19 @@ AI 回复气泡底部有「工具调用」折叠面板，展开可查看每次�
 | 方法 | 路径 | 请求体 | 响应 |
 |---|---|---|---|
 | `POST` | `/api/chat` | `{session_id, message}` | `{reply, intent, tools:[{name, args, result, ms}]}` |
+| `POST` | `/api/chat/stream` | `{session_id, message}` | SSE 流（见下方事件） |
+
+**流式接口事件**（`Content-Type: text/event-stream`）：
+
+| event | data | 说明 |
+|---|---|---|
+| `meta` | `{intent}` | 意图识别结果 |
+| `tool_call` | `{name, args}` | 模型决定调用工具 |
+| `tool_result` | `{name, result, ms}` | 工具执行结果 |
+| `token` | `{text}` | 逐 token 输出 |
+| `reset` | `{}` | 反幻觉校验不通过，清空当前回复重试 |
+| `done` | `{reply, tools}` | 流式结束，返回完整回复 |
+| `error` | `{detail}` | 异常信息 |
 
 ---
 
@@ -422,7 +461,13 @@ LLM 分类输出 `{chat, weather, nl2sql, diagnose, unknown}` + 置信度，置�
 
 ### 🔧 故障诊断（diagnose.py）
 
-基于 `fault_kb.json` 关键词匹配，支持 6 类故障：CPU 高、内存不足、磁盘满、服务宕机、网络不通、数据库慢。
+基于 Chroma 向量库的 RAG 语义检索，嵌入模型走硅基流动 `BAAI/bge-large-zh-v1.5`。
+
+- 支持模糊语义描述命中（如"机器跑不动了进程被杀"→ 内存/OOM）
+- 向量库未初始化或检索异常时自动降级为 `fault_kb.json` 关键词匹配
+- 命中后回查 JSON 原始条目，返回分步骤排查清单 + 追问建议
+- 排查命令带安全免责声明，提醒先在测试环境验证
+- 索引由 `build_fault_kb_vector.py` 幂等构建，修改知识库后重新运行即可
 
 ### 🛡️ 反幻觉校验（output_validator.py）
 
@@ -436,8 +481,11 @@ LLM 分类输出 `{chat, weather, nl2sql, diagnose, unknown}` + 置信度，置�
 - 🎫 **JWT**：HS256，exp 默认 7 天，密钥走 `.env`
 - 🚫 **越权防护**：所有会话接口校验 `session.user_id == user.id`
 - 💉 **SQL 注入**：ORM 参数化 + NL2SQL 黑名单 + 仅 SELECT + LIMIT ≤ 100
-- 🔑 **密钥**：`.env` 不入仓，启动时校验必需变量
+- �️ **XSS 防护**：AI 回复不使用 `v-html`，Markdown（表格/加粗/代码）通过自定义解析器用 Vue 模板渲染，自动转义
+- 📏 **输入校验**：Pydantic `Field` 限制用户名 ≤64、密码 ≤128、消息 ≤2000 字符，防超长输入
+- �� **密钥**：`.env` 不入仓，启动时校验必需变量
 - 📝 **日志脱敏**：tool_call_logs 不记录密钥
+- ⚠️ **命令免责**：故障诊断返回的 shell 命令均带安全提示，标注副作用操作
 
 ---
 
@@ -519,6 +567,20 @@ LLM 生成的 SQL 包含黑名单关键词或不是 SELECT 语句，尝试用更
 <summary><b>NL2SQL 查询失败 "no such table"</b></summary>
 
 `ops.db` 不存在或未初始化，运行 `python init_ops_db.py` 重新生成示例库。
+
+</details>
+
+<details>
+<summary><b>故障诊断未命中或返回关键词匹配结果</b></summary>
+
+Chroma 向量库未构建或初始化失败，系统会自动降级为关键词匹配。运行 `python build_fault_kb_vector.py` 重新构建向量索引即可启用语义检索。若嵌入接口报错，检查 `.env` 中 `SILICONFLOW_API_KEY` 是否有效。
+
+</details>
+
+<details>
+<summary><b>故障诊断报 "The parameter is invalid"（400）</b></summary>
+
+嵌入模型默认传 tiktoken token id 数组，硅基流动只接受字符串输入。代码已通过 `check_embedding_ctx_length=False` 规避此问题，若仍出现请确认 `diagnose.py` 和 `build_fault_kb_vector.py` 均为最新版本。
 
 </details>
 
