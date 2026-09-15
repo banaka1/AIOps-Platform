@@ -186,7 +186,8 @@ def test_chat_openai(message: str, session_id: str, db: Session) -> Tuple[str, s
         # 最后一轮循环后，再调一次 LLM 生成最终回答
         if loop == MAX_TOOL_LOOPS - 1:
             final_response = model_with_tools.invoke(messages)
-            answer = final_response.content
+            # 若仍带 tool_calls，说明已达循环上限，content 可能为空，由兜底逻辑处理
+            answer = final_response.content or ""
 
     # FR-6 反幻觉校验：数值来源回溯，不通过重试 1 次
     tool_results = [t["result"] for t in tool_infos]
@@ -199,7 +200,8 @@ def test_chat_openai(message: str, session_id: str, db: Session) -> Tuple[str, s
                     f"不要编造任何数值，工具失败则如实说明。"
         ))
         retry_response = model_with_tools.invoke(messages)
-        answer = retry_response.content
+        # 重试后若仍带 tool_calls，取 content 或空串由兜底处理
+        answer = retry_response.content or ""
 
     # 兜底：LLM 返回空内容时给默认回复，避免前端显示空白
     if not answer or not answer.strip():

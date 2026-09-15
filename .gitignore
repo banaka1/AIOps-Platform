@@ -11,3 +11,6 @@ frontend/dist/
 
 # 生成的示例数据库（可通过 init_ops_db.py 重新生成）
 ops.db
+
+# 故障知识库向量索引（可通过 build_fault_kb_vector.py 重新生成）
+chroma_db/

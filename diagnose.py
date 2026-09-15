@@ -1,7 +1,8 @@
 """
-故障诊断工具（FR-9）
-- 基于 JSON 知识库的关键词匹配
-- 返回分步骤排查清单 + 多轮追问建议
+故障诊断工具（FR-9）- RAG 升级版
+- 首选 Chroma 向量库做语义检索（嵌入走硅基流动 OpenAI 兼容接口）
+- 向量库未初始化、检索异常或无命中时，自动降级为 JSON 关键词匹配
+- 保留安全免责声明：命令仅供参考，需先在测试环境验证
 """
 import os
 import json
@@ -18,15 +19,55 @@ KB_PATH = os.getenv(
     "FAULT_KB_PATH",
     os.path.join(os.path.dirname(__file__), "fault_kb.json"),
 )
+CHROMA_DIR = os.getenv(
+    "FAULT_CHROMA_PATH",
+    os.path.join(os.path.dirname(__file__), "chroma_db"),
+)
+CHROMA_COLLECTION = os.getenv("FAULT_CHROMA_COLLECTION", "fault_kb")
+EMBEDDING_MODEL = os.getenv("SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+RETRIEVE_TOP_K = int(os.getenv("FAULT_TOP_K", "3"))
+
+_kb_cache: Optional[dict] = None
+_retriever = None
 
 
 def _load_kb() -> dict:
-    with open(KB_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    global _kb_cache
+    if _kb_cache is None:
+        with open(KB_PATH, "r", encoding="utf-8") as f:
+            _kb_cache = json.load(f)
+    return _kb_cache
 
 
-def _match_fault(symptom: str) -> Optional[dict]:
-    """关键词匹配故障条目，返回匹配度最高的条目"""
+def _get_retriever():
+    """惰性初始化 Chroma 检索器；初始化失败返回 None，走关键词降级"""
+    global _retriever
+    if _retriever is not None:
+        return _retriever
+    try:
+        from langchain_chroma import Chroma
+        from langchain_openai import OpenAIEmbeddings
+
+        embeddings = OpenAIEmbeddings(
+            model=EMBEDDING_MODEL,
+            api_key=os.getenv("SILICONFLOW_API_KEY"),
+            base_url=os.getenv("SILICONFLOW_BASE_URL"),
+            check_embedding_ctx_length=False,
+        )
+        vs = Chroma(
+            collection_name=CHROMA_COLLECTION,
+            embedding_function=embeddings,
+            persist_directory=CHROMA_DIR,
+        )
+        _retriever = vs.as_retriever(search_kwargs={"k": RETRIEVE_TOP_K})
+    except Exception as e:
+        print(f"[diagnose] Chroma 初始化失败，降级关键词匹配: {e}")
+        _retriever = None
+    return _retriever
+
+
+def _match_fault_keyword(symptom: str) -> Optional[dict]:
+    """关键词匹配兜底（与原实现一致）"""
     kb = _load_kb()
     symptom_lower = symptom.lower()
     best_match = None
@@ -37,6 +78,33 @@ def _match_fault(symptom: str) -> Optional[dict]:
             best_score = score
             best_match = fault
     return best_match if best_score > 0 else None
+
+
+def _match_fault_rag(symptom: str) -> Optional[dict]:
+    """向量检索匹配；命中返回对应 fault dict，否则 None"""
+    retriever = _get_retriever()
+    if retriever is None:
+        return None
+    try:
+        docs = retriever.invoke(symptom)
+    except Exception as e:
+        print(f"[diagnose] 向量检索异常，降级关键词匹配: {e}")
+        return None
+    if not docs:
+        return None
+    fault_id = docs[0].metadata.get("id")
+    for fault in _load_kb()["faults"]:
+        if fault["id"] == fault_id:
+            return fault
+    return None
+
+
+def _match_fault(symptom: str) -> Optional[dict]:
+    """先 RAG 语义检索，未命中或不可用则降级关键词匹配"""
+    fault = _match_fault_rag(symptom)
+    if fault is not None:
+        return fault
+    return _match_fault_keyword(symptom)
 
 
 @tool
@@ -61,6 +129,8 @@ def diagnose_fault(symptom: str) -> str:
     steps_text = "\n".join(fault["steps"])
     follow_up = "、".join(fault["follow_up"])
     return (
+        "⚠️ 以下排查命令仅供参考，执行前请确认当前环境和权限，"
+        "建议先在测试环境验证，避免在生产环境直接执行有副作用的操作。\n\n"
         f"【{fault['title']}】排查步骤：\n{steps_text}\n\n"
         f"为进一步定位，建议确认：{follow_up}"
     )

@@ -1,18 +1,18 @@
 """
 Pydantic 请求/响应模型
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ---- 鉴权 ----
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -27,8 +27,8 @@ class TokenResponse(BaseModel):
 
 # ---- 聊天 ----
 class ChatRequest(BaseModel):
-    session_id: str
-    message: str
+    session_id: str = Field(..., min_length=1, max_length=64)
+    message: str = Field(..., min_length=1, max_length=2000)
 
 
 # ---- 会话 ----
@@ -44,7 +44,7 @@ class SessionItem(BaseModel):
 
 
 class SessionRenameRequest(BaseModel):
-    title: str
+    title: str = Field(..., min_length=1, max_length=128)
 
 
 class OkResponse(BaseModel):
