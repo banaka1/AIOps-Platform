@@ -93,7 +93,8 @@ def load_chat_history(db: Session, session_id: str, limit: int = 20) -> List[Bas
             history.append(HumanMessage(content=row.content))
         elif row.role == "ai":
             # 还原 tool_calls，让模型知道自己上轮调用过哪些工具
-            history.append(AIMessage(content=row.content, tool_calls=row.tool_calls))
+            # 数据库中无 tool_calls 的纯文本回答存为 None，需转为空列表否则 Pydantic 校验失败
+            history.append(AIMessage(content=row.content, tool_calls=row.tool_calls or []))
         elif row.role == "tool":
             # tool 消息必须带 tool_call_id 才能被模型识别为对应工具的返回
             tool_call_id = (row.tool_calls or {}).get("tool_call_id", "") if row.tool_calls else ""
