@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 import agent
+import server_status
 from database import get_db
 from models import User, Session as DBSession, Message as DBMessage
 from auth import hash_password, verify_password, create_access_token, get_current_user
@@ -68,6 +69,16 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 @app.get("/api/auth/me", response_model=UserResponse)
 def me(user: User = Depends(get_current_user)):
     return UserResponse(user_id=user.id, username=user.username)
+
+
+# ---------- 实时设备状态 ----------
+@app.get("/api/server/status")
+def get_server_status(user: User = Depends(get_current_user)):
+    """本机实时指标（psutil + GPU 性能计数器），供前端顶部面板展示真实设备数据"""
+    try:
+        return server_status.collect_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"采集服务器状态失败: {e}")
 
 
 # ---------- 会话管理 ----------

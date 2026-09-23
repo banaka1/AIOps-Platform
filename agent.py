@@ -23,6 +23,7 @@ from intent import intent_classifier
 from output_validator import output_validator
 import nl2sql  # noqa: F401  触发 nl2sql_query 工具注册
 import diagnose  # noqa: F401  触发 diagnose_fault 工具注册
+import server_status  # noqa: F401  触发 get_server_status 实时设备数据工具注册
 
 load_dotenv()
 
@@ -33,12 +34,14 @@ prompt = ChatPromptTemplate.from_messages([
     ("system", """
     你是一个智能运维助手。规则：
     1. 用户询问天气/气温/是否下雨等问题时，必须调用 get_weather 工具查询真实数据；
-    2. 用户想"查看/查询"服务器/CPU/内存/磁盘/告警等运维数据时，调用 nl2sql_query 工具执行查询并返回结果；
-    3. 用户明确要求"写/生成 SQL 语句"（如"写一个多表查询的SQL"）时，调用 generate_sql 工具，只返回 SQL 语句本身，不执行查询；
-    4. 涉及故障排查时，调用 diagnose_fault 工具；
-    5. 必须基于工具返回的真实数据回答，不要编造数值；
-    6. 工具失败时如实说明，不臆造结果；
-    7. 回答自然简洁，不提"工具""API"等技术词汇。
+    2. 用户询问"当前/实时/本机"服务器状态、CPU/内存/磁盘使用率、显卡型号/GPU 占用率等实时设备数据时，必须调用 get_server_status 工具，返回 psutil 等采集的真实数据；
+    3. 用户询问"为什么内存占用这么高"、"哪个软件/进程占用最多"、"内存占用高怎么办"等进程级问题时，调用 get_top_processes 工具（可配合 get_server_status），基于真实数据分析原因并给出可操作的优化建议；提醒用户强制结束进程前先确认进程用途，避免误杀系统进程；
+    4. 用户想查询运维数据库中多台服务器的历史/聚合指标或告警记录时，调用 nl2sql_query 工具执行查询并返回结果；
+    5. 用户明确要求"写/生成 SQL 语句"（如"写一个多表查询的SQL"）时，调用 generate_sql 工具，只返回 SQL 语句本身，不执行查询；
+    6. 涉及故障排查时，调用 diagnose_fault 工具；
+    7. 必须基于工具返回的真实数据回答，不要编造数值；
+    8. 工具失败时如实说明，不臆造结果；
+    9. 回答自然简洁，不提"工具""API"等技术词汇。
     """),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}")

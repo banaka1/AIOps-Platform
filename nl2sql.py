@@ -25,11 +25,13 @@ DB_PATH = os.getenv("NL2SQL_DB_PATH", os.path.join(os.path.dirname(__file__), "o
 # 表结构（供 LLM 生成 SQL 时参考）
 TABLE_SCHEMA = """
 servers(id, hostname, ip, os, status, created_at)
-metrics(id, server_id, cpu, memory, disk, ts)
+metrics(id, server_id, cpu, memory, disk, gpu_util, gpu_mem_used_gb, gpu_mem_total_gb, ts)
 alerts(id, server_id, level, message, ts)
 servers.status: running/stopped
 alerts.level: info/warning/critical
 说明：
+- 数据来源为 psutil 等真实采集（非模拟数据），metrics 每次采集追加一条快照；
+- gpu_util / gpu_mem_used_gb / gpu_mem_total_gb 为显卡利用率与显存（GB），无显卡或驱动不支持时为 NULL；
 - metrics 是时序表，每个 server_id 可能有多个不同 ts（采集时间）的快照；
 - 查询"当前/最新/现在"性能时，只取每台服务器最新一条（按 server_id 取 MAX(ts) 对应记录），不要返回同一台服务器多条记录；
 - 查询 metrics 时 SELECT 必须包含 ts 列，便于区分采集时间点；
@@ -145,8 +147,9 @@ def _generate_validated_sql(question: str) -> Tuple[bool, str]:
 @tool
 def nl2sql_query(question: str) -> str:
     """
-    将自然语言问题转为 SQL 并查询运维数据库，返回查询结果。
-    当用户想"查看/查询"服务器/主机/CPU/内存/磁盘/告警等运维数据时调用此工具。
+    将自然语言问题转为 SQL 并查询运维数据库（ops.db），返回历史/聚合数据。
+    当用户想查询运维数据库中多台服务器的历史指标、告警记录或聚合统计时调用此工具。
+    注意：若用户只要"当前/实时/本机"设备状态，请改用 get_server_status，不要调用本工具。
 
     Args:
         question: 自然语言问题，如"CPU使用率最高的服务器是哪台"、"列出所有宕机的服务器"

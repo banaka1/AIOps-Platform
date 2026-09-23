@@ -30,8 +30,8 @@
         </div>
       </header>
 
-      <!-- 可查询数据表 -->
-      <SchemaPanel />
+      <!-- 实时设备状态 -->
+      <ServerStatusPanel />
 
       <!-- 消息区 -->
       <div class="messages" ref="messagesEl">
@@ -65,7 +65,7 @@ import { useChatStore } from '@/stores/chat'
 import SessionList from '@/components/SessionList.vue'
 import ChatBubble from '@/components/ChatBubble.vue'
 import ChatInput from '@/components/ChatInput.vue'
-import SchemaPanel from '@/components/SchemaPanel.vue'
+import ServerStatusPanel from '@/components/ServerStatusPanel.vue'
 
 const router = useRouter()
 const userStore = useUserStore()

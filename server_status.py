@@ -226,6 +226,26 @@ def _gpu_info() -> list:
     return gpus
 
 
+def _cpu_model() -> str:
+    """CPU 型号：Windows 读注册表，Linux 读 /proc/cpuinfo，失败回退 platform"""
+    try:
+        if os.name == "nt":
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            ) as key:
+                name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+                return str(name).strip()
+        with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return platform.processor() or "未知 CPU"
+
+
 def _collect_metrics() -> dict:
     vm = psutil.virtual_memory()
     disk = psutil.disk_usage(_disk_path())
@@ -235,6 +255,7 @@ def _collect_metrics() -> dict:
         "os": f"{platform.system()} {platform.release()}",
         "cpu_percent": psutil.cpu_percent(interval=0.5),
         "cpu_count": psutil.cpu_count(logical=True),
+        "cpu_model": _cpu_model(),
         "memory_percent": vm.percent,
         "memory_total_gb": round(vm.total / (1024 ** 3), 2),
         "memory_used_gb": round(vm.used / (1024 ** 3), 2),
@@ -294,6 +315,7 @@ def get_server_status(server: str = "local") -> str:
             f"IP: {m['ip']}\n"
             f"操作系统: {m['os']}\n"
             f"CPU 使用率: {m['cpu_percent']}% (逻辑核数 {m['cpu_count']})\n"
+            f"CPU 型号: {m['cpu_model']}\n"
             f"内存使用率: {m['memory_percent']}% "
             f"({m['memory_used_gb']}GB / {m['memory_total_gb']}GB)\n"
             f"磁盘使用率: {m['disk_percent']}% "
@@ -304,4 +326,44 @@ def get_server_status(server: str = "local") -> str:
         return f"采集实时服务器状态失败: {e}"
 
 
+def _top_memory_processes(limit: int = 3) -> list:
+    """按内存占用率取前 N 个进程，返回 (名称, PID, 内存占用率%, RSS字节) 列表"""
+    procs = []
+    for p in psutil.process_iter(["name", "memory_percent", "memory_info"]):
+        try:
+            info = p.info
+            name = info["name"] or f"PID-{p.pid}"
+            rss = info["memory_info"].rss if info["memory_info"] else 0
+            procs.append((name, p.pid, info["memory_percent"] or 0.0, rss))
+        except Exception:
+            continue  # 系统保护进程可能拒绝访问，跳过
+    procs.sort(key=lambda x: x[2], reverse=True)
+    return procs[:limit]
+
+
+@tool
+def get_top_processes(limit: int = 3) -> str:
+    """
+    查询当前占用内存最高的前 N 个进程（默认前 3）。
+    当用户询问"为什么内存占用这么高"、"哪个软件最占内存"、"内存被什么占用了"、
+    "内存占用高怎么办"等进程级问题时调用此工具，结合 get_server_status 的总体
+    内存使用率分析原因并给出优化建议。
+
+    Args:
+        limit: 返回的进程数量，默认 3，最大 10
+    """
+    try:
+        limit = max(1, min(int(limit), 10))
+        procs = _top_memory_processes(limit)
+        if not procs:
+            return "未能获取进程内存信息。"
+        lines = [f"当前内存占用最高的前 {len(procs)} 个进程："]
+        for i, (name, pid, mpct, rss) in enumerate(procs, 1):
+            lines.append(f"{i}. {name} (PID {pid})：占用 {mpct:.1f}%，约 {rss / 1024 ** 3:.2f}GB")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"采集进程内存信息失败: {e}"
+
+
 registry.register(get_server_status)
+registry.register(get_top_processes)

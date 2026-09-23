@@ -43,10 +43,10 @@
 | 💬 **多轮对话** | 历史消息持久化 MySQL，最近 20 条注入上下文 |
 | 📂 **会话管理** | 新建 / 切换 / 重命名 / 软删除，按用户隔离 |
 | 🎯 **意图识别** | LLM 分类 chat / weather / nl2sql / diagnose，置信度 < 0.6 回退 chat |
-| 🔧 **多工具编排** | 天气查询、NL2SQL、SQL 生成、故障诊断，循环上限 3 次 |
+| 🔧 **多工具编排** | 天气查询、实时设备状态、NL2SQL、SQL 生成、故障诊断，循环上限 3 次 |
 | 🧠 **RAG 故障诊断** | Chroma 向量库语义检索 + 关键词降级，支持模糊描述命中 |
 | ⚡ **流式输出** | SSE 逐 token 推送，首字延迟 2~5s，支持工具调用日志实时展示 |
-| 📋 **可查询数据表** | 前端展示 servers/metrics/alerts 表结构，辅助用户提问 |
+| 📊 **实时设备状态** | 前端顶部面板 + Agent 工具双通道：psutil/GPU 计数器采集 CPU/内存/磁盘/显卡，5 秒自动刷新 |
 | 🛡️ **反幻觉校验** | 数值来源回溯，工具失败如实告知，不通过自动重试 |
 | 📊 **工具日志** | 每次调用记录名称 / 参数 / 结果 / 耗时，前端可折叠查看 |
 | 🎨 **Markdown 渲染** | 表格 / 加粗 / 行内代码安全渲染（无 v-html，防 XSS） |
@@ -167,8 +167,8 @@ MachineLearning/
 │   └── PRD-Agent-Ops.md     # 需求文档
 ├── frontend/                # Vue 3 前端工程
 │   ├── src/
-│   │   ├── api/             # 接口层（auth / chat / session / request）
-│   │   ├── components/      # ChatBubble / ChatInput / SessionList / ToolLogPanel / SchemaPanel
+│   │   ├── api/             # 接口层（auth / chat / session / server / request）
+│   │   ├── components/      # ChatBubble / ChatInput / SessionList / ToolLogPanel / ServerStatusPanel
 │   │   ├── layouts/         # ChatLayout
 │   │   ├── router/          # Vue Router + 登录守卫
 │   │   ├── stores/          # Pinia：user / session / chat
