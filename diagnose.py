@@ -14,17 +14,22 @@ from dotenv import load_dotenv
 from tool_registry import registry
 
 load_dotenv()
-
+# 绝对路径定位，原始json文件记忆库
+# os.path.join()能够自动补全连接符，防止手动设置系统不适配
 KB_PATH = os.getenv(
     "FAULT_KB_PATH",
     os.path.join(os.path.dirname(__file__), "fault_kb.json"),
 )
+# chroma向量库持久化路径
 CHROMA_DIR = os.getenv(
     "FAULT_CHROMA_PATH",
     os.path.join(os.path.dirname(__file__), "chroma_db"),
 )
+# chroma向量库集合名，一个库可以有多个集合，集合名相当于表名，隔离不同类型的向量数据
 CHROMA_COLLECTION = os.getenv("FAULT_CHROMA_COLLECTION", "fault_kb")
+# 向量嵌入模型，默认使用 BAAI/bge-large-zh-v1.5中文向量模型
 EMBEDDING_MODEL = os.getenv("SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-large-zh-v1.5")
+# 向量检索返回 top k 个结果，默认最相关 3 个
 RETRIEVE_TOP_K = int(os.getenv("FAULT_TOP_K", "3"))
 
 _kb_cache: Optional[dict] = None
